@@ -6,7 +6,6 @@ import (
 )
 
 type tokenWrapper struct {
-	seq   int
 	token string
 	doneC chan struct{}
 }
@@ -15,10 +14,10 @@ type tokenWrapper struct {
 // the same token acquire once until it released.
 type TokenizedSemaphore struct {
 	l       sync.Mutex
-	seq     int
+	seq     int64
 	count   int
 	limit   int
-	pending map[int]tokenWrapper
+	pending map[int64]tokenWrapper
 	tokens  map[string]bool
 }
 
@@ -28,7 +27,7 @@ func NewTokenizedSemaphore(limit int) *TokenizedSemaphore {
 		seq:     0,
 		count:   0,
 		limit:   limit,
-		pending: make(map[int]tokenWrapper),
+		pending: make(map[int64]tokenWrapper),
 		tokens:  make(map[string]bool, limit),
 	}
 }
@@ -42,13 +41,14 @@ func (s *TokenizedSemaphore) Acquire(ctx context.Context, token string) error {
 		s.l.Unlock()
 		return nil
 	}
-	s.seq++
+
+	s.seq++ // Overflow?? no such thing..
+	seq := s.seq
 	td := tokenWrapper{
-		seq:   s.seq,
 		token: token,
 		doneC: make(chan struct{}),
 	}
-	s.pending[td.seq] = td
+	s.pending[seq] = td
 	s.l.Unlock()
 
 	select {
@@ -59,7 +59,7 @@ func (s *TokenizedSemaphore) Acquire(ctx context.Context, token string) error {
 		case <-td.doneC: // Double check.
 			return nil // Must let user to release it.
 		default:
-			delete(s.pending, td.seq)
+			delete(s.pending, seq)
 		}
 		return ctx.Err()
 	case <-td.doneC:
