@@ -8,7 +8,7 @@ import (
 var (
 	// ErrOpMismatch is returned when you call Release before Acquire,
 	// or Release after Acquire failed.
-	ErrOpMismatch = errors.New("")
+	ErrOpMismatch = errors.New("operation mismatch: Release called without a successful Acquire")
 )
 
 // Semaphore is a semaphore.
