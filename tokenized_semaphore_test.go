@@ -8,20 +8,19 @@ import (
 )
 
 func TestTokenizedSemaphore1(t *testing.T) {
-	ctx := context.TODO()
 	sem := NewTokenizedSemaphore(1)
 	tokens := strings.Split("a b c d e f g", " ")
 	testTokenizedSemaphore1(t, sem, tokens)
 }
 
 func TestTokenizedSemaphore2(t *testing.T) {
-	ctx := context.TODO()
 	sem := NewTokenizedSemaphore(2)
 	tokens := strings.Split("a a a a a a a", " ")
 	testTokenizedSemaphore1(t, sem, tokens)
 }
 
 func testTokenizedSemaphore1(t *testing.T, sem *TokenizedSemaphore, tokens []string) {
+	ctx := context.TODO()
 	doneC := make(chan string, len(tokens))
 	for _, token := range tokens {
 		go func(token string) {
