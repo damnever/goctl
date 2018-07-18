@@ -3,4 +3,4 @@ language: go
 go:
     - tip
 
-script: go test -v -race -cover
+script: go test -v -race -cover ./...
