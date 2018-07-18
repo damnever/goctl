@@ -90,8 +90,9 @@ func TestConcurrentOPS(t *testing.T) {
 	l.Close()
 
 	minexpect := time.Duration(n*persize/MB200) * time.Second
-	if !(elapsed >= minexpect && elapsed <= minexpect+50*time.Millisecond) {
-		t.Fatalf("expect time range(%v, %v+50ms), got: %v", minexpect, minexpect, elapsed)
+	// 3000ms for the CI.. ~8.03s in my computer
+	if !(elapsed >= minexpect && elapsed <= minexpect+3000*time.Millisecond) {
+		t.Fatalf("expect time range[%v, %v+1500ms], got: %v", minexpect, minexpect, elapsed)
 	}
 	if canceled < 10 {
 		t.Fatalf("expect 10 canceled, got: %d", canceled)
