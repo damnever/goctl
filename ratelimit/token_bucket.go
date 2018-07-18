@@ -67,17 +67,15 @@ type tokenBucketRateLimiter struct {
 
 // NewTokenBucketRateLimiter creates a new token bucket RateLimiter.
 //
-// Usage:
-// {
+// QPS:
 //     l := NewTokenBucketRateLimiter(1000) // 1000 queries per second
 //     defer l.Close()
 //     err := l.Take(ctx, 1) // take a token
-// }
-// {
+//
+// BPS:
 //     l := NewTokenBucketRateLimiter(200*(1<<20)) // 200MB per second
 //     defer l.Close()
 //     err := l.Take(ctx, 1<<20) // take 1MB
-// }
 func NewTokenBucketRateLimiter(limit int) RateLimiter {
 	l := &tokenBucketRateLimiter{
 		limit: limit,

@@ -1,3 +1,4 @@
+// Package semaphore provides semaphore implementations.
 package semaphore
 
 import (

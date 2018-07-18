@@ -21,8 +21,9 @@ func TestQPSLikeRateLimit(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
-	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second) {
-		t.Fatalf("expect time range[1s, 1s+23ms], got: %v", elapsed)
+	// 50ms for CI..
+	if !(elapsed <= time.Second+50*time.Millisecond && elapsed >= time.Second) {
+		t.Fatalf("expect time range[1s, 1s+50ms], got: %v", elapsed)
 	}
 }
 
@@ -46,8 +47,9 @@ func TestBPSLikeRateLimit(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
-	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second) {
-		t.Fatalf("expect time range[1s, 1s+23ms], got: %v", elapsed)
+	// 50ms for CI..
+	if !(elapsed <= time.Second+50*time.Millisecond && elapsed >= time.Second) {
+		t.Fatalf("expect time range[1s, 1s+50ms], got: %v", elapsed)
 	}
 }
 
@@ -90,9 +92,9 @@ func TestConcurrentOPS(t *testing.T) {
 	l.Close()
 
 	minexpect := time.Duration(n*persize/MB200) * time.Second
-	// 3000ms for the CI.. ~8.03s in my computer
-	if !(elapsed >= minexpect && elapsed <= minexpect+3000*time.Millisecond) {
-		t.Fatalf("expect time range[%v, %v+1500ms], got: %v", minexpect, minexpect, elapsed)
+	// 4500ms for the CI.. ~8.03s in my computer
+	if !(elapsed >= minexpect && elapsed <= minexpect+4500*time.Millisecond) {
+		t.Fatalf("expect time range[%v, %v+4500ms], got: %v", minexpect, minexpect, elapsed)
 	}
 	if canceled < 10 {
 		t.Fatalf("expect 10 canceled, got: %d", canceled)
