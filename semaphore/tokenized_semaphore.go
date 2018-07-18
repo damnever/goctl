@@ -1,4 +1,4 @@
-package cctl
+package semaphore
 
 import (
 	"context"
