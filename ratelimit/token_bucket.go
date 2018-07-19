@@ -1,9 +1,7 @@
 package ratelimit
 
 import (
-	"container/heap"
 	"context"
-	"fmt"
 	"sync"
 	"time"
 )
@@ -29,7 +27,7 @@ type tokenBucketRateLimiter struct {
 func NewTokenBucketRateLimiter(limit int) RateLimiter {
 	l := &tokenBucketRateLimiter{
 		limit: limit,
-		reqc:  make(chan *tokenReq, 32),
+		reqc:  make(chan *tokenReq, 4), // No buffer??
 		stopc: make(chan struct{}),
 		donec: make(chan struct{}),
 	}
@@ -40,32 +38,27 @@ func NewTokenBucketRateLimiter(limit int) RateLimiter {
 func (l *tokenBucketRateLimiter) scheduling() {
 	defer close(l.donec)
 	interval := time.Second / time.Duration(l.limit)
-	if interval < time.Millisecond {
+	if interval < time.Millisecond { // Try the best to avoid ticks droping..
 		interval = time.Millisecond
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 
 	bucket := 0
 	token := l.limit / int(time.Second/interval) // Approximately..
-	// XXX(damnever): maybe FIFO is good enough..
-	// TODO(damnever): more tests..
-	pending := newTokenReqGenerations()
-	visitor := func(req *tokenReq) bool {
-		if req.iscanceled() {
-			return true
-		}
-		if bucket >= req.size {
-			bucket -= req.markdone()
-			return true
-		}
-		return false
-	}
+	// Eventually, the size of ring buffer will stay constant, I think..
+	pending := newTokenReqRing()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-l.stopc:
-			pending.visitoldest(visitor)
+			for pending.length() > 0 && bucket > 0 {
+				req := pending.popfirst()
+				if !req.iscanceled() && bucket >= req.size {
+					bucket -= req.markdone()
+				}
+			}
 			return
 		case <-ticker.C:
 			if x := bucket + token; x < l.limit {
@@ -73,11 +66,22 @@ func (l *tokenBucketRateLimiter) scheduling() {
 			} else {
 				bucket = l.limit
 			}
-			pending.newgeneration()
-			pending.visitoldest(visitor)
+
+			for pending.length() > 0 && bucket > 0 {
+				req := pending.fisrt()
+				if req.iscanceled() {
+					pending.popfirst()
+					continue
+				}
+				if bucket < req.size {
+					break
+				}
+				bucket -= req.markdone()
+				pending.popfirst()
+			}
 		case req := <-l.reqc:
 			if req.size > bucket {
-				pending.newtokenreq(req)
+				pending.add(req)
 			} else {
 				bucket -= req.markdone()
 			}
@@ -87,6 +91,7 @@ func (l *tokenBucketRateLimiter) scheduling() {
 
 func (l *tokenBucketRateLimiter) Take(ctx context.Context, size int) error {
 	cancelc := ctx.Done()
+	// XXX(damnever): reuse tokenReq?
 	req := &tokenReq{
 		size:    size,
 		cancelc: cancelc,
@@ -157,98 +162,71 @@ func (r *tokenReq) isdone() bool {
 	}
 }
 
-type tokenReqHeap []*tokenReq
-
-func (h *tokenReqHeap) Len() int           { return len(*h) }
-func (h *tokenReqHeap) Less(i, j int) bool { return (*h)[i].size < (*h)[j].size }
-func (h *tokenReqHeap) Swap(i, j int)      { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
-
-func (h *tokenReqHeap) Push(x interface{}) {
-	*h = append(*h, x.(*tokenReq))
+type tokenReqRing struct {
+	reqs  []*tokenReq
+	start int
+	end   int
+	size  int
+	cap   int
 }
 
-func (h *tokenReqHeap) Pop() interface{} {
-	last := len(*h) - 1
-	x := (*h)[last]
-	(*h)[last] = nil
-	*h = (*h)[0:last]
-	return x
-}
-
-type tokenReqGenerations struct {
-	generations []*tokenReqHeap
-	start       int
-	end         int
-	size        int
-	cap         int
-}
-
-func newTokenReqGenerations() *tokenReqGenerations {
-	// Eventually, the length of the ring will stay constant.
-	g := &tokenReqGenerations{
-		generations: []*tokenReqHeap{},
-		start:       -1,
-		end:         -1,
-		size:        0,
-		cap:         0,
+func newTokenReqRing() *tokenReqRing {
+	return &tokenReqRing{
+		reqs:  make([]*tokenReq, 2, 2),
+		start: -1,
+		end:   -1,
+		size:  0,
+		cap:   2,
 	}
-	g.newgeneration()
-	return g
 }
 
-func (g *tokenReqGenerations) String() string {
-	generations := []int{}
-	for _, h := range g.generations {
-		generations = append(generations, h.Len())
-	}
-	return fmt.Sprintf("{start:%d, end:%d, size:%d, cap:%d, g:%v}", g.start, g.end, g.size, g.cap, generations)
-}
-
-func (g *tokenReqGenerations) newgeneration() {
-	if g.size > 0 && g.generations[g.end].Len() == 0 {
-		return
-	}
-
-	if g.size < g.cap {
-		g.end = (g.end + 1) % g.cap
-		g.size++
+func (r *tokenReqRing) add(req *tokenReq) {
+	if r.size < r.cap {
+		r.end = (r.end + 1) % r.cap
+		if r.size == 0 {
+			r.start = 0
+			r.end = 0
+		}
 	} else {
-		if g.end < g.start {
-			oldg := g.generations
-			g.generations = make([]*tokenReqHeap, g.cap+1)
-			copy(g.generations, oldg[g.start:])
-			copy(g.generations[g.cap-g.start:], oldg[:g.end+1])
-			g.generations[g.cap] = &tokenReqHeap{}
+		old := r.reqs
+		next := r.cap
+		if cap := r.cap * 2; cap <= 512 {
+			r.cap = cap
 		} else {
-			g.generations = append(g.generations, &tokenReqHeap{})
+			r.cap += 2
 		}
-		g.end = g.cap
-		g.cap++
-		g.size++
-		g.start = 0
+		r.reqs = make([]*tokenReq, r.cap, r.cap)
+		if r.end < r.start {
+			copy(r.reqs, old[r.start:])
+			copy(r.reqs[next-r.start:], old[:r.end+1])
+		} else {
+			copy(r.reqs, old[:])
+		}
+		r.end = next
+		r.start = 0
 	}
+	r.size++
+	r.reqs[r.end] = req
 }
 
-func (g *tokenReqGenerations) newtokenreq(req *tokenReq) {
-	heap.Push(g.generations[g.end], req)
+func (r *tokenReqRing) length() int {
+	return r.size
 }
 
-func (g *tokenReqGenerations) visitoldest(visitor func(req *tokenReq) bool) {
-	if g.size == 0 {
-		return
-	}
+func (r *tokenReqRing) fisrt() *tokenReq {
+	return r.reqs[r.start]
+}
 
-	oldest := g.generations[g.start]
-	for oldest.Len() > 0 {
-		if !visitor((*oldest)[0]) {
-			break
-		}
-		heap.Pop(oldest)
-
-		if oldest.Len() == 0 && g.start != g.end {
-			g.start = (g.start + 1) % g.cap
-			g.size--
-		}
-		oldest = g.generations[g.start]
+func (r *tokenReqRing) popfirst() *tokenReq {
+	// XXX(damnever): free up memory?
+	r.size--
+	first := r.reqs[r.start]
+	r.reqs[r.start] = nil
+	if r.start != r.end {
+		r.start = (r.start + 1) % r.cap
+	} else {
+		r.start = -1
+		r.end = -1
 	}
+	return first
 }

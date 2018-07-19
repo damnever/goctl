@@ -4,7 +4,7 @@ import "context"
 
 type unlimiter struct{}
 
-// NewUnlimiter creates a unlimiter, use it with caution.
+// NewUnlimiter creates an unlimiter, use it with caution.
 func NewUnlimiter() RateLimiter {
 	return &unlimiter{}
 }

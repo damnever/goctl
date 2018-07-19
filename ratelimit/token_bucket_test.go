@@ -11,96 +11,43 @@ import (
 	"time"
 )
 
-func TestTokenReqGenerations(t *testing.T) {
-	g := newTokenReqGenerations()
-	g.newgeneration()
-	assert(t, g.cap, 1)
-	assert(t, g.size, 1)
-	assert(t, g.start, 0)
-	assert(t, g.end, 0)
-
-	g.newtokenreq(&tokenReq{})
-	g.newtokenreq(&tokenReq{})
-	g.newtokenreq(&tokenReq{})
-	assert(t, g.cap, 1)
-	assert(t, g.size, 1)
-	assert(t, g.start, 0)
-	assert(t, g.end, 0)
-
-	g.newgeneration()
-	assert(t, g.cap, 2)
-	assert(t, g.size, 2)
-	assert(t, g.start, 0)
-	assert(t, g.end, 1)
-	g.newtokenreq(&tokenReq{})
-	g.newtokenreq(&tokenReq{})
-	g.newtokenreq(&tokenReq{})
-
-	i := 0
-	g.visitoldest(func(req *tokenReq) bool {
-		if i++; i > 3 {
-			return false
-		}
-		return true
-	})
-	assert(t, g.cap, 2)
-	assert(t, g.size, 1)
-	assert(t, g.start, 1)
-	assert(t, g.end, 1)
-
-	g.newgeneration()
-	assert(t, g.cap, 2)
-	assert(t, g.size, 2)
-	assert(t, g.start, 1)
-	assert(t, g.end, 0)
-	g.newtokenreq(&tokenReq{})
-	g.newtokenreq(&tokenReq{})
-	g.newtokenreq(&tokenReq{})
-
-	i = 0
-	g.visitoldest(func(req *tokenReq) bool {
-		if i++; i > 3 {
-			return false
-		}
-		return true
-	})
-	assert(t, g.cap, 2)
-	assert(t, g.size, 1)
-	assert(t, g.start, 0)
-	assert(t, g.end, 0)
-
-	g.visitoldest(func(req *tokenReq) bool {
-		return true
-	})
-	assert(t, g.cap, 2)
-	assert(t, g.size, 1)
-	assert(t, g.start, 0)
-	assert(t, g.end, 0)
-
-	g.newtokenreq(&tokenReq{})
-	g.newgeneration()
-	g.newtokenreq(&tokenReq{})
-	i = 0
-	g.visitoldest(func(req *tokenReq) bool {
-		if i++; i > 1 {
-			return false
-		}
-		return true
-	})
-	g.newgeneration()
-	g.newtokenreq(&tokenReq{})
-	g.newtokenreq(&tokenReq{})
-	g.newgeneration()
-	g.newtokenreq(&tokenReq{})
-	g.newtokenreq(&tokenReq{})
-	g.newtokenreq(&tokenReq{})
-	assert(t, g.cap, 3)
-	assert(t, g.size, 3)
-	assert(t, g.end, 2)
-	assert(t, g.start, 0)
-	for i, g := range g.generations {
-		assert(t, g.Len(), i+1)
+func TestTokenReqRing(t *testing.T) {
+	r := newTokenReqRing()
+	r.add(&tokenReq{})
+	r.add(&tokenReq{})
+	assert(t, r.cap, 2)
+	assert(t, r.length(), 2)
+	assert(t, r.start, 0)
+	assert(t, r.end, 1)
+	r.add(&tokenReq{})
+	assert(t, r.cap, 4)
+	assert(t, r.length(), 3)
+	assert(t, r.start, 0)
+	assert(t, r.end, 2)
+	r.add(&tokenReq{})
+	r.popfirst()
+	assert(t, r.size, 3)
+	assert(t, r.start, 1)
+	r.popfirst()
+	r.popfirst()
+	r.popfirst()
+	assert(t, r.length(), 0)
+	assert(t, r.start, -1)
+	assert(t, r.start, -1)
+	r.reqs[0] = &tokenReq{size: 3}
+	r.reqs[1] = &tokenReq{size: 4}
+	r.reqs[2] = &tokenReq{size: 1}
+	r.reqs[3] = &tokenReq{size: 2}
+	r.end = 1
+	r.start = 2
+	r.size = 4
+	r.add(&tokenReq{size: 5})
+	assert(t, r.end, 4)
+	for i := 0; i < r.end; i++ {
+		assert(t, r.reqs[i].size, i+1)
 	}
+	r.popfirst()
+	assert(t, r.fisrt().size, 2)
 }
 
 func TestQPSLikeRateLimit(t *testing.T) {
@@ -115,9 +62,8 @@ func TestQPSLikeRateLimit(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
-	// 50ms for CI..
-	if !(elapsed <= time.Second+50*time.Millisecond && elapsed >= time.Second) {
-		t.Fatalf("expect time range[1s, 1s+50ms], got: %v", elapsed)
+	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second) {
+		t.Fatalf("expect time range[1s, 1s+23ms], got: %v", elapsed)
 	}
 }
 
@@ -141,9 +87,8 @@ func TestBPSLikeRateLimit(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
-	// 50ms for CI..
-	if !(elapsed <= time.Second+50*time.Millisecond && elapsed >= time.Second) {
-		t.Fatalf("expect time range[1s, 1s+50ms], got: %v", elapsed)
+	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second) {
+		t.Fatalf("expect time range[1s, 1s+23ms], got: %v", elapsed)
 	}
 }
 
@@ -239,9 +184,9 @@ func TestConcurrentOPS(t *testing.T) {
 	l.Close()
 
 	minexpect := time.Duration(ngo*sizego/MB200) * time.Second
-	// 4500ms for the CI.. ~8.03s in my computer
-	if !(elapsed >= minexpect && elapsed <= minexpect+4500*time.Millisecond) {
-		t.Fatalf("expect time range[%v, %v+4500ms], got: %v", minexpect, minexpect, elapsed)
+	// 1500ms for the CI.. ~8.00s in my computer
+	if !(elapsed >= minexpect && elapsed <= minexpect+1500*time.Millisecond) {
+		t.Fatalf("expect time range[%v, %v+1500ms], got: %v", minexpect, minexpect, elapsed)
 	}
 	if canceled < 10 {
 		t.Fatalf("expect 10 canceled, got: %d", canceled)
