@@ -8,6 +8,113 @@ import (
 	"time"
 )
 
+type tokenBucketRateLimiter struct {
+	limit int
+	reqc  chan *tokenReq
+	stopc chan struct{}
+	donec chan struct{}
+}
+
+// NewTokenBucketRateLimiter creates a new token bucket RateLimiter.
+//
+// QPS:
+//     l := NewTokenBucketRateLimiter(1000) // 1000 queries per second
+//     defer l.Close()
+//     err := l.Take(ctx, 1) // take a token
+//
+// BPS:
+//     l := NewTokenBucketRateLimiter(200*(1<<20)) // 200MB per second
+//     defer l.Close()
+//     err := l.Take(ctx, 1<<20) // take 1MB
+func NewTokenBucketRateLimiter(limit int) RateLimiter {
+	l := &tokenBucketRateLimiter{
+		limit: limit,
+		reqc:  make(chan *tokenReq, 32),
+		stopc: make(chan struct{}),
+		donec: make(chan struct{}),
+	}
+	go l.scheduling()
+	return l
+}
+
+func (l *tokenBucketRateLimiter) scheduling() {
+	defer close(l.donec)
+	interval := time.Second / time.Duration(l.limit)
+	if interval < time.Millisecond {
+		interval = time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	bucket := 0
+	token := l.limit / int(time.Second/interval) // Approximately..
+	// XXX(damnever): maybe FIFO is good enough..
+	// TODO(damnever): more tests..
+	pending := newTokenReqGenerations()
+	visitor := func(req *tokenReq) bool {
+		if req.iscanceled() {
+			return true
+		}
+		if bucket >= req.size {
+			bucket -= req.markdone()
+			return true
+		}
+		return false
+	}
+
+	for {
+		select {
+		case <-l.stopc:
+			pending.visitoldest(visitor)
+			return
+		case <-ticker.C:
+			if x := bucket + token; x < l.limit {
+				bucket = x
+			} else {
+				bucket = l.limit
+			}
+			pending.newgeneration()
+			pending.visitoldest(visitor)
+		case req := <-l.reqc:
+			if req.size > bucket {
+				pending.newtokenreq(req)
+			} else {
+				bucket -= req.markdone()
+			}
+		}
+	}
+}
+
+func (l *tokenBucketRateLimiter) Take(ctx context.Context, size int) error {
+	cancelc := ctx.Done()
+	req := &tokenReq{
+		size:    size,
+		cancelc: cancelc,
+		donec:   make(chan struct{}),
+	}
+
+	select {
+	case <-cancelc:
+		return ctx.Err()
+	case l.reqc <- req:
+	}
+
+	select {
+	case <-cancelc:
+		if !req.isdone() {
+			return ctx.Err()
+		}
+	case <-req.donec:
+	}
+	return nil
+}
+
+func (l *tokenBucketRateLimiter) Close() error {
+	close(l.stopc)
+	<-l.donec
+	return nil
+}
+
 type tokenReq struct {
 	l       sync.Mutex
 	size    int
@@ -144,111 +251,4 @@ func (g *tokenReqGenerations) visitoldest(visitor func(req *tokenReq) bool) {
 		}
 		oldest = g.generations[g.start]
 	}
-}
-
-type tokenBucketRateLimiter struct {
-	limit int
-	reqc  chan *tokenReq
-	stopc chan struct{}
-	donec chan struct{}
-}
-
-// NewTokenBucketRateLimiter creates a new token bucket RateLimiter.
-//
-// QPS:
-//     l := NewTokenBucketRateLimiter(1000) // 1000 queries per second
-//     defer l.Close()
-//     err := l.Take(ctx, 1) // take a token
-//
-// BPS:
-//     l := NewTokenBucketRateLimiter(200*(1<<20)) // 200MB per second
-//     defer l.Close()
-//     err := l.Take(ctx, 1<<20) // take 1MB
-func NewTokenBucketRateLimiter(limit int) RateLimiter {
-	l := &tokenBucketRateLimiter{
-		limit: limit,
-		reqc:  make(chan *tokenReq, 32),
-		stopc: make(chan struct{}),
-		donec: make(chan struct{}),
-	}
-	go l.scheduling()
-	return l
-}
-
-func (l *tokenBucketRateLimiter) scheduling() {
-	defer close(l.donec)
-	interval := time.Second / time.Duration(l.limit)
-	if interval < time.Millisecond {
-		interval = time.Millisecond
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	bucket := 0
-	token := l.limit / int(time.Second/interval) // Approximately..
-	// XXX(damnever): maybe FIFO is good enough..
-	// TODO(damnever): more tests..
-	pending := newTokenReqGenerations()
-	visitor := func(req *tokenReq) bool {
-		if req.iscanceled() {
-			return true
-		}
-		if bucket >= req.size {
-			bucket -= req.markdone()
-			return true
-		}
-		return false
-	}
-
-	for {
-		select {
-		case <-l.stopc:
-			pending.visitoldest(visitor)
-			return
-		case <-ticker.C:
-			if x := bucket + token; x < l.limit {
-				bucket = x
-			} else {
-				bucket = l.limit
-			}
-			pending.newgeneration()
-			pending.visitoldest(visitor)
-		case req := <-l.reqc:
-			if req.size > bucket {
-				pending.newtokenreq(req)
-			} else {
-				bucket -= req.markdone()
-			}
-		}
-	}
-}
-
-func (l *tokenBucketRateLimiter) Take(ctx context.Context, size int) error {
-	cancelc := ctx.Done()
-	req := &tokenReq{
-		size:    size,
-		cancelc: cancelc,
-		donec:   make(chan struct{}),
-	}
-
-	select {
-	case <-cancelc:
-		return ctx.Err()
-	case l.reqc <- req:
-	}
-
-	select {
-	case <-cancelc:
-		if !req.isdone() {
-			return ctx.Err()
-		}
-	case <-req.donec:
-	}
-	return nil
-}
-
-func (l *tokenBucketRateLimiter) Close() error {
-	close(l.stopc)
-	<-l.donec
-	return nil
 }
