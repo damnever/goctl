@@ -7,13 +7,16 @@ import (
 )
 
 type tokenBucketRateLimiter struct {
-	limit int
 	reqc  chan *tokenReq
+	semc  chan struct{}
 	stopc chan struct{}
 	donec chan struct{}
 }
 
 // NewTokenBucketRateLimiter creates a new token bucket RateLimiter.
+//
+// NOTE: it will not reach the max possible limit, except you only have
+// few goroutines in your nonbusy system.
 //
 // QPS:
 //     l := NewTokenBucketRateLimiter(1000) // 1000 queries per second
@@ -25,28 +28,32 @@ type tokenBucketRateLimiter struct {
 //     defer l.Close()
 //     err := l.Take(ctx, 1<<20) // take 1MB
 func NewTokenBucketRateLimiter(limit int) RateLimiter {
+	interval := time.Second / time.Duration(limit)
+	if interval < 2*time.Millisecond { // Try the best to avoid ticks droping..
+		interval = 2 * time.Millisecond
+	}
+	token := limit / int(time.Second/interval) // Approximately..
+	concurrency := token
+	if concurrency > 64 {
+		concurrency = 64
+	}
+
 	l := &tokenBucketRateLimiter{
-		limit: limit,
-		reqc:  make(chan *tokenReq, 4), // No buffer??
+		reqc:  make(chan *tokenReq, 1), // No buffer??
+		semc:  make(chan struct{}, concurrency),
 		stopc: make(chan struct{}),
 		donec: make(chan struct{}),
 	}
-	go l.scheduling()
+	go l.scheduling(interval, token, limit, concurrency)
 	return l
 }
 
-func (l *tokenBucketRateLimiter) scheduling() {
+func (l *tokenBucketRateLimiter) scheduling(interval time.Duration, token, limit, concurrency int) {
 	defer close(l.donec)
-	interval := time.Second / time.Duration(l.limit)
-	if interval < time.Millisecond { // Try the best to avoid ticks droping..
-		interval = time.Millisecond
-	}
 
-	bucket := 0
-	token := l.limit / int(time.Second/interval) // Approximately..
+	bucket := token
 	// Eventually, the size of ring buffer will stay constant, I think..
-	pending := newTokenReqRing()
-
+	pending := newTokenReqRing(((concurrency + 1) & (^1)) * 16)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -61,10 +68,10 @@ func (l *tokenBucketRateLimiter) scheduling() {
 			}
 			return
 		case <-ticker.C:
-			if x := bucket + token; x < l.limit {
+			if x := bucket + token; x < limit {
 				bucket = x
 			} else {
-				bucket = l.limit
+				bucket = limit
 			}
 
 			for pending.length() > 0 && bucket > 0 {
@@ -91,13 +98,20 @@ func (l *tokenBucketRateLimiter) scheduling() {
 
 func (l *tokenBucketRateLimiter) Take(ctx context.Context, size int) error {
 	cancelc := ctx.Done()
+	select {
+	case <-cancelc:
+		return ctx.Err()
+	case l.semc <- struct{}{}:
+		// Reduce the ring buffer size and maybe the scheduling time..
+		defer func() { <-l.semc }()
+	}
+
 	// XXX(damnever): reuse tokenReq?
 	req := &tokenReq{
 		size:    size,
 		cancelc: cancelc,
 		donec:   make(chan struct{}),
 	}
-
 	select {
 	case <-cancelc:
 		return ctx.Err()
@@ -163,20 +177,22 @@ func (r *tokenReq) isdone() bool {
 }
 
 type tokenReqRing struct {
-	reqs  []*tokenReq
-	start int
-	end   int
-	size  int
-	cap   int
+	reqs     []*tokenReq
+	start    int
+	end      int
+	size     int
+	cap      int
+	proposed int
 }
 
-func newTokenReqRing() *tokenReqRing {
+func newTokenReqRing(proposed int) *tokenReqRing {
 	return &tokenReqRing{
-		reqs:  make([]*tokenReq, 2, 2),
-		start: -1,
-		end:   -1,
-		size:  0,
-		cap:   2,
+		reqs:     make([]*tokenReq, 2, 2),
+		start:    -1,
+		end:      -1,
+		size:     0,
+		cap:      2,
+		proposed: proposed,
 	}
 }
 
@@ -190,7 +206,7 @@ func (r *tokenReqRing) add(req *tokenReq) {
 	} else {
 		old := r.reqs
 		next := r.cap
-		if cap := r.cap * 2; cap <= 512 {
+		if cap := r.cap * 2; cap <= r.proposed {
 			r.cap = cap
 		} else {
 			r.cap += 2

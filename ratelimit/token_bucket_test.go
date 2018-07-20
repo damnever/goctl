@@ -12,7 +12,7 @@ import (
 )
 
 func TestTokenReqRing(t *testing.T) {
-	r := newTokenReqRing()
+	r := newTokenReqRing(16)
 	r.add(&tokenReq{})
 	r.add(&tokenReq{})
 	assert(t, r.cap, 2)
@@ -62,7 +62,7 @@ func TestQPSLikeRateLimit(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
-	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second) {
+	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second-10*time.Millisecond) {
 		t.Fatalf("expect time range[1s, 1s+23ms], got: %v", elapsed)
 	}
 }
@@ -87,7 +87,7 @@ func TestBPSLikeRateLimit(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
-	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second) {
+	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second-10*time.Millisecond) {
 		t.Fatalf("expect time range[1s, 1s+23ms], got: %v", elapsed)
 	}
 }
@@ -141,14 +141,14 @@ func TestNoStarving(t *testing.T) {
 }
 
 func TestConcurrentOPS(t *testing.T) {
-	MB200 := 200 * (1 << 20)
-	l := NewTokenBucketRateLimiter(MB200)
+	MB512 := 512 * (1 << 20)
+	l := NewTokenBucketRateLimiter(MB512)
 
 	ctx := context.TODO()
 	wg := sync.WaitGroup{}
 	start := time.Now()
 
-	ngo, sizego := 64, MB200/8
+	ngo, sizego := 256, MB512/64
 	var canceled int32
 	for i := 0; i < ngo; i++ {
 		wg.Add(1)
@@ -165,7 +165,7 @@ func TestConcurrentOPS(t *testing.T) {
 					cctx, cancel := context.WithTimeout(ctx, timeout)
 					defer cancel()
 
-					size := r.Intn(1 << 15)
+					size := r.Intn(1 << 23)
 					if size == 0 {
 						size = 1
 					}
@@ -173,6 +173,7 @@ func TestConcurrentOPS(t *testing.T) {
 						count += size
 					} else {
 						atomic.AddInt32(&canceled, 1)
+						time.Sleep(10 * time.Millisecond)
 					}
 				}()
 			}
@@ -183,8 +184,7 @@ func TestConcurrentOPS(t *testing.T) {
 	elapsed := time.Since(start)
 	l.Close()
 
-	minexpect := time.Duration(ngo*sizego/MB200) * time.Second
-	// 1500ms for the CI.. ~8.00s in my computer
+	minexpect := time.Duration(ngo*sizego/MB512) * time.Second
 	if !(elapsed >= minexpect && elapsed <= minexpect+1500*time.Millisecond) {
 		t.Fatalf("expect time range[%v, %v+1500ms], got: %v", minexpect, minexpect, elapsed)
 	}
