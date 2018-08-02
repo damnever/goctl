@@ -12,7 +12,7 @@ import (
 )
 
 func TestTokenReqRing(t *testing.T) {
-	r := newTokenReqRing(16)
+	r := newTokenReqRing()
 	r.add(&tokenReq{})
 	r.add(&tokenReq{})
 	assert(t, r.cap, 2)
@@ -69,7 +69,7 @@ func TestQPSLikeRateLimit(t *testing.T) {
 
 func TestBPSLikeRateLimit(t *testing.T) {
 	MB10 := 10 * (1 << 20)
-	l := NewTokenBucketRateLimiter(MB10) // 10MB
+	l := NewTokenBucketRateLimiter(MB10)
 	defer l.Close()
 
 	start := time.Now()
@@ -112,7 +112,7 @@ func TestNoStarving(t *testing.T) {
 			r := rand.New(rand.NewSource(time.Now().UnixNano()))
 			for count, next := 0, 0; count < sizego; next = (next + 1) % 2 {
 				func() {
-					cctx, cancel := context.WithTimeout(ctx, 60*time.Millisecond)
+					cctx, cancel := context.WithTimeout(ctx, 33*time.Millisecond)
 					defer cancel()
 					size := r.Intn(sizes[next])
 					if size == 0 {
@@ -126,7 +126,7 @@ func TestNoStarving(t *testing.T) {
 							atomic.AddInt32(&big, 1)
 						}
 					} else {
-						t.Fatalf("unbelivable")
+						// panic("unbelievable")
 					}
 				}()
 			}
@@ -134,7 +134,7 @@ func TestNoStarving(t *testing.T) {
 	}
 	wg.Wait()
 
-	if big >= small*2 || big*2 <= small {
+	if (big >= small*2 || big*2 <= small) || small-big > int32(float64((big+big)/2)*0.08) {
 		t.Fatalf("somebody is starving: %d vs %d", small, big)
 	}
 	fmt.Printf("B(%d) vs S(%v)\n", big, small)
@@ -165,7 +165,7 @@ func TestConcurrentOPS(t *testing.T) {
 					cctx, cancel := context.WithTimeout(ctx, timeout)
 					defer cancel()
 
-					size := r.Intn(1 << 23)
+					size := r.Intn(5234790) + 8092
 					if size == 0 {
 						size = 1
 					}
