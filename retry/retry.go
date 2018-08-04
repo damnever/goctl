@@ -2,6 +2,7 @@
 package retry
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -37,8 +38,10 @@ func New(backoffs []time.Duration) Retrier {
 
 // Run keeps calling the RetryFunc if it returns (Continue, non-nil-err),
 // otherwise it will stop retrying. It is goroutine safe unless you do something wrong ^_^.
-func (r Retrier) Run(try func() (State, error)) (err error) {
+func (r Retrier) Run(ctx context.Context, try func() (State, error)) (err error) {
 	var state State
+	cancelc := ctx.Done()
+
 	for _, backoff := range r.backoffs {
 		state, err = try()
 		switch state {
@@ -51,16 +54,25 @@ func (r Retrier) Run(try func() (State, error)) (err error) {
 		if err == nil {
 			return nil
 		}
+
 		if backoff > 0 {
-			time.Sleep(backoff)
+			select {
+			case <-cancelc:
+			case <-time.After(backoff):
+			}
+		} else {
+			select {
+			case <-cancelc:
+			default:
+			}
 		}
 	}
 	return err
 }
 
-// Retry is a shortcut for Retrier.Run.
+// Retry is a shortcut for Retrier.Run with context.Background().
 func Retry(backoffs []time.Duration, try func() (State, error)) error {
-	return New(backoffs).Run(try)
+	return New(backoffs).Run(context.Background(), try)
 }
 
 // ConstantBackoffs creates a list of backoffs with constant values.
