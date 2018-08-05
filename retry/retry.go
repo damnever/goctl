@@ -58,11 +58,13 @@ func (r Retrier) Run(ctx context.Context, try func() (State, error)) (err error)
 		if backoff > 0 {
 			select {
 			case <-cancelc:
+				return ctx.Err()
 			case <-time.After(backoff):
 			}
 		} else {
 			select {
 			case <-cancelc:
+				return ctx.Err()
 			default:
 			}
 		}
