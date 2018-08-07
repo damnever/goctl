@@ -1,4 +1,13 @@
 // Package circuitbreaker implements the Circuit-Breaker pattern.
+//
+// The transformation of circuitbreaker's state is as follows:
+//  1. Assuming the number of requests reachs the threshold(Config.TriggerThreshold), initial state is CLOSE.
+//  2. After 1, if the error rate or the rate of high latency exceeds the threshold(Config.ErrorRate/HighLatencyRate),
+//     the circuitbreaker is OPEN.
+//  3. Otherwise for 2, the circuitbreaker will be CLOSE.
+//  4. After 2, the circuitbreaker remains OPEN until some amount of time(Config.SleepWindow) pass,
+//     then it's the HALF-OPEN which let a single request through, if the request fails, it returns to
+//     the OPEN. If the request succeeds, the circuitbreaker is CLOSE, and 1 takes over again.
 package circuitbreaker
 
 import (
@@ -55,15 +64,6 @@ func DefaultConfig() Config {
 }
 
 // CircuitBreaker traces the failures then protects the system.
-//
-// The state changes is as follows:
-//  1. Assuming the number of requests reachs the threshold(Config.TriggerThreshold), initial state is CLOSE.
-//  2. After 1, if the error rate or the rate of high latency exceeds the threshold(Config.ErrorRate/HighLatencyRate),
-//     the circuitbreaker is OPEN.
-//  3. Otherwise for 2, the circuitbreaker will be CLOSE.
-//  4. After 2, the circuitbreaker remains OPEN until some amount of time(Config.SleepWindow) pass,
-//     then it's the HALF-OPEN which let a single request through, if the request fails, it returns to
-//     the OPEN. If the request succeeds, the circuitbreaker is CLOSE, and 1 takes over again.
 //
 // There is a lock inside, in case of you worry about the performance,
 // use multiple CircuitBreaker for defferent kinds of API(request type),
