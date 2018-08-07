@@ -62,8 +62,8 @@ func TestQPSLikeRateLimit(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
-	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second-10*time.Millisecond) {
-		t.Fatalf("expect time range[1s, 1s+23ms], got: %v", elapsed)
+	if !(elapsed <= time.Second+33*time.Millisecond && elapsed >= time.Second-10*time.Millisecond) {
+		t.Fatalf("expect time range[1s, 1s+33ms], got: %v", elapsed)
 	}
 }
 
@@ -87,8 +87,8 @@ func TestBPSLikeRateLimit(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
-	if !(elapsed <= time.Second+23*time.Millisecond && elapsed >= time.Second-10*time.Millisecond) {
-		t.Fatalf("expect time range[1s, 1s+23ms], got: %v", elapsed)
+	if !(elapsed <= time.Second+33*time.Millisecond && elapsed >= time.Second-10*time.Millisecond) {
+		t.Fatalf("expect time range[1s, 1s+33ms], got: %v", elapsed)
 	}
 }
 
@@ -185,8 +185,8 @@ func TestConcurrentOPS(t *testing.T) {
 	l.Close()
 
 	minexpect := time.Duration(ngo*sizego/MB512) * time.Second
-	if !(elapsed >= minexpect && elapsed <= minexpect+1500*time.Millisecond) {
-		t.Fatalf("expect time range[%v, %v+1500ms], got: %v", minexpect, minexpect, elapsed)
+	if !(elapsed >= minexpect && elapsed <= minexpect+2000*time.Millisecond) {
+		t.Fatalf("expect time range[%v, %v+2000ms], got: %v", minexpect, minexpect, elapsed)
 	}
 	if canceled < 10 {
 		t.Fatalf("expect 10 canceled, got: %d", canceled)
