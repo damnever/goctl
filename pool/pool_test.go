@@ -74,6 +74,7 @@ func newTestingPool(t *testing.T, opts Options) (*Pool, []Resource) {
 		assertNil(t, pool.Put(r))
 	}
 	assertTrue(t, len(pool.idlec) == opts.Capacity)
+	assertTrue(t, len(pool.idlec) == pool.IdleNum())
 	assertTrue(t, len(pool.slotsc) == opts.Capacity)
 	return pool, resources[:opts.Capacity]
 }
@@ -99,6 +100,7 @@ func TestBasic(t *testing.T) {
 	go func() {
 		<-start
 		assertTrue(t, len(pool.idlec) == 1)
+		assertTrue(t, len(pool.idlec) == pool.IdleNum())
 		assertTrue(t, len(pool.slotsc) == opts.Capacity)
 		r, err := pool.Get(_ctx)
 		assertNil(t, err)
@@ -188,6 +190,7 @@ func TestErrors(t *testing.T) {
 	r.(*fakeTestableResource).err = errors.New("fatal")
 	assertNil(t, pool.Put(r))
 	assertTrue(t, len(pool.idlec) == opts.Capacity-1)
+	assertTrue(t, len(pool.idlec) == pool.IdleNum())
 	assertTrue(t, len(pool.slotsc) == opts.Capacity-1)
 
 	// No new resource created even if pool not full.
@@ -203,6 +206,7 @@ func TestErrors(t *testing.T) {
 	r, err = pool.GetNoWait()
 	assertNil(t, err)
 	assertTrue(t, len(pool.idlec) == 0)
+	assertTrue(t, len(pool.idlec) == pool.IdleNum())
 	assertTrue(t, len(pool.slotsc) == 1)
 	assertNil(t, pool.Put(r))
 	assertTrue(t, len(pool.idlec) == 1)
@@ -214,6 +218,7 @@ func TestErrors(t *testing.T) {
 	assertNil(t, err)
 	assertTrue(t, r != r1)
 	assertTrue(t, len(pool.idlec) == 0)
+	assertTrue(t, len(pool.idlec) == pool.IdleNum())
 	assertTrue(t, len(pool.slotsc) == 1)
 
 	// Context done.
@@ -294,6 +299,7 @@ func TestConcurrentOps(t *testing.T) {
 	wg.Wait()
 
 	assertTrue(t, len(pool.idlec) == 0)
+	assertTrue(t, len(pool.idlec) == pool.IdleNum())
 }
 
 func assertTrue(t *testing.T, v bool) {
