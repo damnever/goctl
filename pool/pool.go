@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -111,7 +112,8 @@ type Pool struct {
 	// Benchmark:
 	// *resourceWrapper: 300000  5508 ns/op  960 B/op  20 allocs/op
 	// resourceWrapper:  300000  4366 ns/op    0 B/op   0 allocs/op
-	idlec chan resourceWrapper
+	idlec   chan resourceWrapper
+	idlenum int32
 }
 
 // New creates a new Pool.
@@ -142,6 +144,7 @@ func (p *Pool) Get(ctx context.Context) (Resource, error) {
 		case <-p.closec:
 			return nil, ErrPoolClosed
 		case r := <-p.idlec:
+			atomic.AddInt32(&p.idlenum, -1)
 			if r.test(p.opts.IdleTimeout, p.opts.TestOnBorrow, p.opts.TestWhileIdle) {
 				return r.resource, nil
 			}
@@ -189,6 +192,7 @@ func (p *Pool) getResource(ctx context.Context) (Resource, error) {
 		default:
 			select {
 			case r := <-p.idlec:
+				atomic.AddInt32(&p.idlenum, -1)
 				if r.test(p.opts.IdleTimeout, p.opts.TestOnBorrow, p.opts.TestWhileIdle) {
 					return r.resource, nil
 				}
@@ -230,6 +234,7 @@ func (p *Pool) Put(r Resource) error {
 	rw := resourceWrapper{resource: r, idleAt: time.Now()}
 	select {
 	case p.idlec <- rw:
+		atomic.AddInt32(&p.idlenum, 1)
 		return nil
 	default:
 		panic(ErrMismatch)
@@ -242,6 +247,11 @@ func (p *Pool) makeSlot() {
 	default:
 		panic(ErrMismatch)
 	}
+}
+
+// IdleNum returns the number of idle resources, it just a approximate figure.
+func (p *Pool) IdleNum() int {
+	return int(atomic.LoadInt32(&p.idlenum))
 }
 
 // Close closes the pool and all idle resources in the pool.
