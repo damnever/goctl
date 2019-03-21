@@ -24,7 +24,6 @@ var (
 	ErrMismatch       = errors.New("no Get/GetNoWait matched in previous call")
 	errNoIdleResource = errors.New("no idle resource available")
 
-	_ctx         = context.TODO()
 	_placeholder = struct{}{}
 )
 
@@ -41,6 +40,13 @@ type TestableResource interface {
 	Test() error
 }
 
+// ResetableResource indicates the resource is resetable, Reset() will be called
+// before every old resource return if ResetOnBorrow is set.
+type ResetableResource interface {
+	Resource
+	Reset() error
+}
+
 // Options is used to configurate the Pool.
 // Set TestOnBorrow(true), TestWhileIdle(true) and IdleTimeout(>0) together
 // will always test the resource if resource is testable.
@@ -50,6 +56,7 @@ type Options struct {
 	// Capacity sets the max pool size.
 	Capacity int
 	// IdleTimeout 0 indicate no idle timeout.
+	// If TestWhileIdle is not set, the resource will be closed directly after timeout.
 	IdleTimeout time.Duration
 	// TestOnBorrow will test the resource before borrow and not idle for IdleTimeout,
 	// the resource must implement the TestableResource interface.
@@ -58,6 +65,9 @@ type Options struct {
 	// if IdleTimeout less and equal than 0, this option is ignored.
 	// the resource must implement the TestableResource interface.
 	TestWhileIdle bool
+	// ResetOnBorrow will reset the resource before borrow,
+	// the resource must implement the ResetableResource interface.
+	ResetOnBorrow bool
 }
 
 func (opts Options) validate() error {
@@ -73,6 +83,29 @@ func (opts Options) validate() error {
 type resourceWrapper struct {
 	resource Resource
 	idleAt   time.Time
+}
+
+func newResourceWrapper(resource Resource, opts Options) resourceWrapper {
+	r := resourceWrapper{resource: resource}
+	if opts.IdleTimeout > 0 {
+		r.idleAt = time.Now()
+	}
+	return r
+}
+
+func (r resourceWrapper) checkOnBorrow(opts Options) bool {
+	return r.reset(opts.ResetOnBorrow) && r.test(opts.IdleTimeout, opts.TestOnBorrow, opts.TestWhileIdle)
+}
+
+func (r resourceWrapper) reset(resetOnBorrow bool) bool {
+	if !resetOnBorrow {
+		return true
+	}
+	if rr, ok := r.resource.(ResetableResource); !ok || rr.Reset() == nil {
+		return true
+	}
+	r.resource.Close()
+	return false
 }
 
 func (r resourceWrapper) test(d time.Duration, testOnBorrow, testWhileIdle bool) bool {
@@ -107,7 +140,8 @@ type Pool struct {
 
 	closel sync.RWMutex
 	closed bool
-	closec chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
 	slotsc chan struct{}
 	// Benchmark:
 	// *resourceWrapper: 300000  5508 ns/op  960 B/op  20 allocs/op
@@ -118,13 +152,20 @@ type Pool struct {
 
 // New creates a new Pool.
 func New(opts Options) (*Pool, error) {
+	return NewWithCtx(context.Background(), opts)
+}
+
+// NewWithCtx creates a new Pool with given ctx.
+func NewWithCtx(ctx context.Context, opts Options) (*Pool, error) {
 	if err := opts.validate(); err != nil {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	return &Pool{
 		opts:   opts,
-		closec: make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
 		slotsc: make(chan struct{}, opts.Capacity),
 		idlec:  make(chan resourceWrapper, opts.Capacity),
 	}, nil
@@ -136,16 +177,17 @@ func (p *Pool) Get(ctx context.Context) (Resource, error) {
 		return r, err
 	}
 
-	done := ctx.Done()
+	donec := ctx.Done()
+	closec := p.ctx.Done()
 	for {
 		select {
-		case <-done:
+		case <-donec:
 			return nil, ctx.Err()
-		case <-p.closec:
+		case <-closec:
 			return nil, ErrPoolClosed
 		case r := <-p.idlec:
 			atomic.AddInt32(&p.idlenum, -1)
-			if r.test(p.opts.IdleTimeout, p.opts.TestOnBorrow, p.opts.TestWhileIdle) {
+			if r.checkOnBorrow(p.opts) {
 				return r.resource, nil
 			}
 			p.makeSlot()
@@ -162,13 +204,13 @@ func (p *Pool) Get(ctx context.Context) (Resource, error) {
 
 // GetNoWait gets a resource from pool, return immediately.
 func (p *Pool) GetNoWait() (Resource, error) {
-	if r, err := p.getResource(_ctx); err != errNoIdleResource {
+	if r, err := p.getResource(nil); err != errNoIdleResource {
 		return r, err
 	}
 
 	select {
 	case p.slotsc <- _placeholder:
-	case <-p.closec:
+	case <-p.ctx.Done():
 		return nil, ErrPoolClosed
 	default:
 		return nil, ErrPoolIsBusy
@@ -182,18 +224,23 @@ func (p *Pool) GetNoWait() (Resource, error) {
 }
 
 func (p *Pool) getResource(ctx context.Context) (Resource, error) {
-	done := ctx.Done()
+	var donec <-chan struct{}
+	if ctx != nil {
+		donec = ctx.Done()
+	}
+	closec := p.ctx.Done()
+
 	for {
 		select {
-		case <-done:
+		case <-donec:
 			return nil, ctx.Err()
-		case <-p.closec:
+		case <-closec:
 			return nil, ErrPoolClosed
 		default:
 			select {
 			case r := <-p.idlec:
 				atomic.AddInt32(&p.idlenum, -1)
-				if r.test(p.opts.IdleTimeout, p.opts.TestOnBorrow, p.opts.TestWhileIdle) {
+				if r.checkOnBorrow(p.opts) {
 					return r.resource, nil
 				}
 				p.makeSlot()
@@ -231,7 +278,7 @@ func (p *Pool) Put(r Resource) error {
 		return r.Close()
 	}
 
-	rw := resourceWrapper{resource: r, idleAt: time.Now()}
+	rw := newResourceWrapper(r, p.opts)
 	select {
 	case p.idlec <- rw:
 		atomic.AddInt32(&p.idlenum, 1)
@@ -266,7 +313,7 @@ func (p *Pool) Close() error {
 		return ErrPoolClosed
 	}
 	p.closed = true
-	close(p.closec)
+	p.cancel()
 
 FILL_SLOTS:
 	for {
