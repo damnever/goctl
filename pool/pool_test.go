@@ -24,9 +24,10 @@ func TestOptions(t *testing.T) {
 	assertNil(t, opts.validate())
 }
 
-var initErr = func() error {
-	return nil
-}
+var (
+	initErr = func() error { return nil }
+	_ctx    = context.TODO()
+)
 
 type fakeResource struct {
 	err      error
@@ -45,10 +46,25 @@ func (r *fakeResource) Close() error {
 	return r.closeErr
 }
 
+type fakeResetableResource struct {
+	*fakeResource
+	resetcalls int
+	reseterr   error
+}
+
+func newFakeResetableResource() (Resource, error) {
+	return &fakeResetableResource{fakeResource: &fakeResource{}}, initErr()
+}
+
+func (rr *fakeResetableResource) Reset() error {
+	rr.resetcalls++
+	return rr.reseterr
+}
+
 type fakeTestableResource struct {
 	*fakeResource
 	testcalls int
-	testErr   error
+	testerr   error
 }
 
 func newFakeTestableResource() (Resource, error) {
@@ -57,7 +73,7 @@ func newFakeTestableResource() (Resource, error) {
 
 func (tr *fakeTestableResource) Test() error {
 	tr.testcalls++
-	return tr.testErr
+	return tr.testerr
 }
 
 func newTestingPool(t *testing.T, opts Options) (*Pool, []Resource) {
@@ -80,6 +96,7 @@ func newTestingPool(t *testing.T, opts Options) (*Pool, []Resource) {
 }
 
 func TestBasic(t *testing.T) {
+	initErr = func() error { return nil }
 	opts := Options{ResourceFactory: newFakeResource, Capacity: 3}
 	pool, resources := newTestingPool(t, opts)
 	defer pool.Close()
@@ -121,7 +138,37 @@ func TestBasic(t *testing.T) {
 	}
 }
 
+func TestResourceReset(t *testing.T) {
+	initErr = func() error { return nil }
+	pool, _ := newTestingPool(t, Options{
+		ResourceFactory: newFakeResetableResource,
+		Capacity:        1,
+		ResetOnBorrow:   true,
+	})
+	defer pool.Close()
+	r0, err := pool.GetNoWait()
+	assertNil(t, err)
+	rr0 := r0.(*fakeResetableResource)
+	assertTrue(t, rr0.resetcalls == 1)
+	assertNil(t, pool.Put(r0))
+	r1, err := pool.GetNoWait()
+	assertNil(t, err)
+	rr1 := r1.(*fakeResetableResource)
+	assertTrue(t, rr1.resetcalls == 2)
+	assertTrue(t, rr0 == rr1)
+	assertNil(t, pool.Put(r1))
+
+	rr1.reseterr = errors.New("fatal error")
+	r2, err := pool.GetNoWait()
+	assertNil(t, err)
+	rr2 := r2.(*fakeResetableResource)
+	assertTrue(t, rr2.resetcalls == 0)
+	assertTrue(t, rr1 != rr2)
+	assertNil(t, pool.Put(r2))
+}
+
 func TestResourceTesting(t *testing.T) {
+	initErr = func() error { return nil }
 	{
 		opts := Options{
 			ResourceFactory: newFakeTestableResource,
@@ -213,7 +260,7 @@ func TestErrors(t *testing.T) {
 	assertTrue(t, len(pool.slotsc) == 1)
 
 	// New resource create by Get.
-	r.(*fakeTestableResource).testErr = errors.New("test failed")
+	r.(*fakeTestableResource).testerr = errors.New("test failed")
 	r1, err := pool.Get(_ctx)
 	assertNil(t, err)
 	assertTrue(t, r != r1)
@@ -280,7 +327,7 @@ func TestConcurrentOps(t *testing.T) {
 			} else if rn <= 4 {
 				time.Sleep(opts.IdleTimeout)
 			} else if rn <= 6 {
-				raw.testErr = errors.New("fatal error")
+				raw.testerr = errors.New("fatal error")
 			} else if rn <= 8 {
 				raw.err = errors.New("fatal error")
 			}
