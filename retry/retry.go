@@ -41,6 +41,12 @@ func New(backoffs []time.Duration) Retrier {
 func (r Retrier) Run(ctx context.Context, try func() (State, error)) (err error) {
 	var state State
 	cancelc := ctx.Done()
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 
 	for _, backoff := range r.backoffs {
 		state, err = try()
@@ -56,10 +62,16 @@ func (r Retrier) Run(ctx context.Context, try func() (State, error)) (err error)
 		}
 
 		if backoff > 0 {
+			if timer == nil {
+				timer = time.NewTimer(backoff)
+			} else {
+				// It is safe to reset it since the channel explicitly drained.
+				timer.Reset(backoff)
+			}
 			select {
 			case <-cancelc:
 				return ctx.Err()
-			case <-time.After(backoff):
+			case <-timer.C:
 			}
 		} else {
 			select {
