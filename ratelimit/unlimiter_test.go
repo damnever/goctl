@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestUnlimiter(t *testing.T) {
@@ -17,9 +19,7 @@ func TestUnlimiter(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := l.Take(context.TODO(), 11111111); err != nil {
-				t.Fatalf("expect nil, got: %v", err)
-			}
+			require.Nil(t, l.Take(context.TODO(), 11111111))
 		}()
 	}
 

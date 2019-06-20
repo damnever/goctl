@@ -1,9 +1,10 @@
 package retry
 
 import (
-	"runtime"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRetry(t *testing.T) {
@@ -15,11 +16,11 @@ func TestRetry(t *testing.T) {
 			cnt++
 			return Continue, ErrNeedRetry
 		})
-		assert(t, true, err != nil)
-		assert(t, cnt, 6)
+		require.NotNil(t, err)
+		require.Equal(t, 6, cnt)
 		elapsed := time.Now().Sub(now)
-		assert(t, elapsed > backoff*5, true)
-		assert(t, elapsed < backoff*6, true)
+		require.True(t, elapsed > backoff*5)
+		require.True(t, elapsed < backoff*6)
 	}
 	{
 		cnt := 0
@@ -28,9 +29,9 @@ func TestRetry(t *testing.T) {
 			cnt++
 			return Continue, nil
 		})
-		must(t, err)
-		assert(t, cnt, 1)
-		assert(t, true, time.Now().Sub(now) < backoff)
+		require.Nil(t, err)
+		require.Equal(t, 1, cnt)
+		require.True(t, time.Now().Sub(now) < backoff)
 	}
 	{
 		cnt := 0
@@ -41,8 +42,8 @@ func TestRetry(t *testing.T) {
 			}
 			return Continue, ErrNeedRetry
 		})
-		assert(t, cnt, 2)
-		assert(t, true, err == ErrNeedRetry)
+		require.Equal(t, 2, cnt)
+		require.Equal(t, ErrNeedRetry, err)
 	}
 	{
 		cnt := 0
@@ -53,47 +54,33 @@ func TestRetry(t *testing.T) {
 			}
 			return Continue, ErrNeedRetry
 		})
-		assert(t, cnt, 2)
-		assert(t, true, err == nil)
+		require.Equal(t, 2, cnt)
+		require.Nil(t, err)
 	}
 }
 
 func TestBackoffFactory(t *testing.T) {
 	{
 		backoffs := ZeroBackoffs(3)
-		assert(t, len(backoffs), 3)
+		require.Equal(t, 3, len(backoffs))
 		for _, v := range backoffs {
-			assert(t, v, time.Duration(0))
+			require.Equal(t, time.Duration(0), v)
 		}
 	}
 	{
 		backoff := 100 * time.Millisecond
 		backoffs := ConstantBackoffs(5, backoff)
-		assert(t, len(backoffs), 5)
+		require.Equal(t, 5, len(backoffs))
 		for _, v := range backoffs {
-			assert(t, v, backoff)
+			require.Equal(t, backoff, v)
 		}
 	}
 	{
 		backoff := 10 * time.Millisecond
 		backoffs := ExponentialBackoffs(10, backoff)
-		assert(t, len(backoffs), 10)
+		require.Equal(t, 10, len(backoffs))
 		for i, v := range backoffs {
-			assert(t, v, backoff*(1<<uint(i)))
+			require.Equal(t, backoff*(1<<uint(i)), v)
 		}
-	}
-}
-
-func assert(t *testing.T, actual interface{}, expect interface{}) {
-	if actual != expect {
-		_, fileName, line, _ := runtime.Caller(1)
-		t.Fatalf("expect %v, got %v at (%v:%v)\n", expect, actual, fileName, line)
-	}
-}
-
-func must(t *testing.T, err error) {
-	if err != nil {
-		_, fileName, line, _ := runtime.Caller(1)
-		t.Fatalf("expect nil, got %v at (%v:%v)\n", err, fileName, line)
 	}
 }
