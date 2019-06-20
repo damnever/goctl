@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestQPSLikeRateLimit(t *testing.T) {
@@ -17,9 +18,7 @@ func TestQPSLikeRateLimit(t *testing.T) {
 
 	start := time.Now()
 	for i := 0; i < 1000; i++ {
-		if err := l.Take(context.TODO(), 1); err != nil {
-			t.Fatalf("expect nil, got: %v", err)
-		}
+		require.Nil(t, l.Take(context.TODO(), 1))
 	}
 
 	elapsed := time.Since(start)
@@ -41,9 +40,7 @@ func TestBPSLikeRateLimit(t *testing.T) {
 		if size == 0 {
 			size = 1
 		}
-		if err := l.Take(context.TODO(), size); err != nil {
-			t.Fatalf("expect nil, got: %v", err)
-		}
+		require.Nil(t, l.Take(context.TODO(), size))
 		count += size
 	}
 
@@ -151,12 +148,5 @@ func TestConcurrentOPS(t *testing.T) {
 	}
 	if canceled < 10 {
 		t.Fatalf("expect 10 canceled, got: %d", canceled)
-	}
-}
-
-func assert(t *testing.T, actual interface{}, expect interface{}) {
-	_, fileName, line, _ := runtime.Caller(1)
-	if actual != expect {
-		t.Fatalf("expect %v, got %v at (%v:%v)\n", expect, actual, fileName, line)
 	}
 }

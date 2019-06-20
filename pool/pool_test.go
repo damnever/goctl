@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"math/rand"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestOptions(t *testing.T) {
@@ -21,7 +22,7 @@ func TestOptions(t *testing.T) {
 		t.Fatalf("expect error about Capacity, got: %v", err)
 	}
 	opts.Capacity = 3
-	assertNil(t, opts.validate())
+	require.Nil(t, opts.validate())
 }
 
 var (
@@ -78,20 +79,20 @@ func (tr *fakeTestableResource) Test() error {
 
 func newTestingPool(t *testing.T, opts Options) (*Pool, []Resource) {
 	pool, err := New(opts)
-	assertNil(t, err)
+	require.Nil(t, err)
 	resources := []Resource{}
 	for i, n := 0, opts.Capacity+1; i < n; i++ {
 		r, err := pool.GetNoWait()
-		assertTrue(t, err == nil || err == ErrPoolIsBusy)
+		require.True(t, err == nil || err == ErrPoolIsBusy)
 		resources = append(resources, r)
 	}
-	assertTrue(t, len(pool.slotsc) == opts.Capacity)
+	require.Equal(t, opts.Capacity, len(pool.slotsc))
 	for _, r := range resources {
-		assertNil(t, pool.Put(r))
+		require.Nil(t, pool.Put(r))
 	}
-	assertTrue(t, len(pool.idlec) == opts.Capacity)
-	assertTrue(t, len(pool.idlec) == pool.IdleNum())
-	assertTrue(t, len(pool.slotsc) == opts.Capacity)
+	require.Equal(t, opts.Capacity, len(pool.idlec))
+	require.Equal(t, pool.IdleNum(), len(pool.idlec))
+	require.Equal(t, opts.Capacity, len(pool.slotsc))
 	return pool, resources[:opts.Capacity]
 }
 
@@ -103,33 +104,33 @@ func TestBasic(t *testing.T) {
 
 	for i := 0; i < opts.Capacity; i++ {
 		r, err := pool.GetNoWait()
-		assertNil(t, err)
+		require.Nil(t, err)
 		exist := false
 		for _, rr := range resources {
 			if rr == r {
 				exist = true
 			}
 		}
-		assertTrue(t, exist)
+		require.True(t, exist)
 	}
 
 	start, done := make(chan struct{}), make(chan struct{})
 	go func() {
 		<-start
-		assertTrue(t, len(pool.idlec) == 1)
-		assertTrue(t, len(pool.idlec) == pool.IdleNum())
-		assertTrue(t, len(pool.slotsc) == opts.Capacity)
+		require.Equal(t, 1, len(pool.idlec))
+		require.Equal(t, pool.IdleNum(), len(pool.idlec))
+		require.Equal(t, opts.Capacity, len(pool.slotsc))
 		r, err := pool.Get(_ctx)
-		assertNil(t, err)
+		require.Nil(t, err)
 		var _ = r.(*fakeResource)
-		assertTrue(t, len(pool.idlec) == 0)
-		assertTrue(t, len(pool.slotsc) == opts.Capacity)
+		require.Equal(t, 0, len(pool.idlec))
+		require.Equal(t, opts.Capacity, len(pool.slotsc))
 		close(done)
 	}()
 
 	_, err := pool.GetNoWait()
-	assertTrue(t, err == ErrPoolIsBusy)
-	assertNil(t, pool.Put(resources[0]))
+	require.Equal(t, ErrPoolIsBusy, err)
+	require.Nil(t, pool.Put(resources[0]))
 	close(start)
 	select {
 	case <-done:
@@ -147,24 +148,24 @@ func TestResourceReset(t *testing.T) {
 	})
 	defer pool.Close()
 	r0, err := pool.GetNoWait()
-	assertNil(t, err)
+	require.Nil(t, err)
 	rr0 := r0.(*fakeResetableResource)
-	assertTrue(t, rr0.resetcalls == 1)
-	assertNil(t, pool.Put(r0))
+	require.Equal(t, 1, rr0.resetcalls)
+	require.Nil(t, pool.Put(r0))
 	r1, err := pool.GetNoWait()
-	assertNil(t, err)
+	require.Nil(t, err)
 	rr1 := r1.(*fakeResetableResource)
-	assertTrue(t, rr1.resetcalls == 2)
-	assertTrue(t, rr0 == rr1)
-	assertNil(t, pool.Put(r1))
+	require.Equal(t, 2, rr1.resetcalls)
+	require.True(t, rr0 == rr1) // We need compare the pointer address!!
+	require.Nil(t, pool.Put(r1))
 
 	rr1.reseterr = errors.New("fatal error")
 	r2, err := pool.GetNoWait()
-	assertNil(t, err)
+	require.Nil(t, err)
 	rr2 := r2.(*fakeResetableResource)
-	assertTrue(t, rr2.resetcalls == 0)
-	assertTrue(t, rr1 != rr2)
-	assertNil(t, pool.Put(r2))
+	require.Equal(t, 0, rr2.resetcalls)
+	require.True(t, rr1 != rr2) // We need compare the pointer address!!
+	require.Nil(t, pool.Put(r2))
 }
 
 func TestResourceTesting(t *testing.T) {
@@ -178,9 +179,9 @@ func TestResourceTesting(t *testing.T) {
 		pool, _ := newTestingPool(t, opts)
 		defer pool.Close()
 		r, err := pool.GetNoWait()
-		assertNil(t, err)
-		assertTrue(t, r.(*fakeTestableResource).testcalls == 1)
-		assertNil(t, pool.Put(r))
+		require.Nil(t, err)
+		require.Equal(t, 1, r.(*fakeTestableResource).testcalls)
+		require.Nil(t, pool.Put(r))
 	}
 	{
 		opts := Options{
@@ -193,14 +194,14 @@ func TestResourceTesting(t *testing.T) {
 		defer pool.Close()
 
 		r, err := pool.GetNoWait()
-		assertNil(t, err)
-		assertTrue(t, r.(*fakeTestableResource).testcalls == 0)
-		assertNil(t, pool.Put(r))
+		require.Nil(t, err)
+		require.Equal(t, 0, r.(*fakeTestableResource).testcalls)
+		require.Nil(t, pool.Put(r))
 		time.Sleep(opts.IdleTimeout)
 		r1, err := pool.GetNoWait()
-		assertNil(t, err)
-		assertTrue(t, r == r1)
-		assertTrue(t, r.(*fakeTestableResource).testcalls == 1)
+		require.Nil(t, err)
+		require.True(t, r == r1) // We need compare the pointer address!!
+		require.Equal(t, 1, r.(*fakeTestableResource).testcalls)
 	}
 	{
 		opts := Options{
@@ -212,13 +213,13 @@ func TestResourceTesting(t *testing.T) {
 		defer pool.Close()
 
 		r, err := pool.GetNoWait()
-		assertNil(t, err)
-		assertTrue(t, r.(*fakeTestableResource).testcalls == 0)
-		assertNil(t, pool.Put(r))
+		require.Nil(t, err)
+		require.Equal(t, 0, r.(*fakeTestableResource).testcalls)
+		require.Nil(t, pool.Put(r))
 		time.Sleep(opts.IdleTimeout)
 		r1, err := pool.GetNoWait()
-		assertNil(t, err)
-		assertTrue(t, r != r1)
+		require.Nil(t, err)
+		require.True(t, r != r1) // We need compare the pointer address!!
 	}
 }
 
@@ -233,65 +234,65 @@ func TestErrors(t *testing.T) {
 
 	// Put with error.
 	r, err := pool.GetNoWait()
-	assertNil(t, err)
+	require.Nil(t, err)
 	r.(*fakeTestableResource).err = errors.New("fatal")
-	assertNil(t, pool.Put(r))
-	assertTrue(t, len(pool.idlec) == opts.Capacity-1)
-	assertTrue(t, len(pool.idlec) == pool.IdleNum())
-	assertTrue(t, len(pool.slotsc) == opts.Capacity-1)
+	require.Nil(t, pool.Put(r))
+	require.Equal(t, opts.Capacity-1, len(pool.idlec))
+	require.Equal(t, pool.IdleNum(), len(pool.idlec))
+	require.Equal(t, opts.Capacity-1, len(pool.slotsc))
 
 	// No new resource created even if pool not full.
 	r, err = pool.GetNoWait()
-	assertNil(t, err)
-	assertNil(t, pool.Put(r))
-	assertTrue(t, len(pool.idlec) == opts.Capacity-1)
-	assertTrue(t, len(pool.slotsc) == opts.Capacity-1)
+	require.Nil(t, err)
+	require.Nil(t, pool.Put(r))
+	require.Equal(t, opts.Capacity-1, len(pool.idlec))
+	require.Equal(t, opts.Capacity-1, len(pool.slotsc))
 
 	time.Sleep(opts.IdleTimeout)
 
 	// All resources timed out.
 	r, err = pool.GetNoWait()
-	assertNil(t, err)
-	assertTrue(t, len(pool.idlec) == 0)
-	assertTrue(t, len(pool.idlec) == pool.IdleNum())
-	assertTrue(t, len(pool.slotsc) == 1)
-	assertNil(t, pool.Put(r))
-	assertTrue(t, len(pool.idlec) == 1)
-	assertTrue(t, len(pool.slotsc) == 1)
+	require.Nil(t, err)
+	require.Equal(t, 0, len(pool.idlec))
+	require.Equal(t, pool.IdleNum(), len(pool.idlec))
+	require.Equal(t, 1, len(pool.slotsc))
+	require.Nil(t, pool.Put(r))
+	require.Equal(t, 1, len(pool.idlec))
+	require.Equal(t, 1, len(pool.slotsc))
 
 	// New resource create by Get.
 	r.(*fakeTestableResource).testerr = errors.New("test failed")
 	r1, err := pool.Get(_ctx)
-	assertNil(t, err)
-	assertTrue(t, r != r1)
-	assertTrue(t, len(pool.idlec) == 0)
-	assertTrue(t, len(pool.idlec) == pool.IdleNum())
-	assertTrue(t, len(pool.slotsc) == 1)
+	require.Nil(t, err)
+	require.NotEqual(t, r, r1)
+	require.Equal(t, 0, len(pool.idlec))
+	require.Equal(t, pool.IdleNum(), len(pool.idlec))
+	require.Equal(t, 1, len(pool.slotsc))
 
 	// Context done.
 	resources := []Resource{r1}
 	for i, n := 0, opts.Capacity-1; i < n; i++ {
 		r, err := pool.GetNoWait()
-		assertNil(t, err)
+		require.Nil(t, err)
 		resources = append(resources, r)
 	}
 	ctx, cancel := context.WithCancel(_ctx)
 	cancel()
 	_, err = pool.Get(ctx)
-	assertTrue(t, err == context.Canceled || err == context.DeadlineExceeded)
+	require.True(t, err == context.Canceled || err == context.DeadlineExceeded)
 	ctx, cancel = context.WithTimeout(_ctx, 10*time.Millisecond)
 	defer cancel()
 	_, err = pool.Get(ctx)
-	assertTrue(t, err == context.Canceled || err == context.DeadlineExceeded)
+	require.True(t, err == context.Canceled || err == context.DeadlineExceeded)
 
 	// Closed
-	assertNil(t, pool.Close())
+	require.Nil(t, pool.Close())
 	_, err = pool.GetNoWait()
-	assertTrue(t, err == ErrPoolClosed)
+	require.Equal(t, ErrPoolClosed, err)
 	for _, r2 := range resources {
-		assertNil(t, pool.Put(r2))
+		require.Nil(t, pool.Put(r2))
 	}
-	assertTrue(t, pool.Close() == ErrPoolClosed)
+	require.Equal(t, ErrPoolClosed, pool.Close())
 }
 
 func TestConcurrentOps(t *testing.T) {
@@ -308,7 +309,7 @@ func TestConcurrentOps(t *testing.T) {
 		TestOnBorrow:    true,
 	}
 	pool, err := New(opts)
-	assertNil(t, err)
+	require.Nil(t, err)
 	defer pool.Close()
 
 	wg := sync.WaitGroup{}
@@ -345,20 +346,6 @@ func TestConcurrentOps(t *testing.T) {
 	}
 	wg.Wait()
 
-	assertTrue(t, len(pool.idlec) == 0)
-	assertTrue(t, len(pool.idlec) == pool.IdleNum())
-}
-
-func assertTrue(t *testing.T, v bool) {
-	if !v {
-		_, _, line, _ := runtime.Caller(1)
-		t.Fatalf("[%d] expect true, got false", line)
-	}
-}
-
-func assertNil(t *testing.T, v interface{}) {
-	if v != nil {
-		_, _, line, _ := runtime.Caller(1)
-		t.Fatalf("[%d] expect nil, got: %v", line, v)
-	}
+	require.Equal(t, 0, len(pool.idlec))
+	require.Equal(t, pool.IdleNum(), len(pool.idlec))
 }

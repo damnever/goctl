@@ -1,9 +1,10 @@
 package circuitbreaker
 
 import (
-	"runtime"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRollingCounter(t *testing.T) {
@@ -18,7 +19,7 @@ func TestRollingCounter(t *testing.T) {
 			rc.Incr(now)
 		}
 		count += i
-		assert(t, rc.Count(now), count)
+		require.Equal(t, count, rc.Count(now))
 		if i != n {
 			now = now.Add(duration)
 		}
@@ -30,27 +31,20 @@ func TestRollingCounter(t *testing.T) {
 		rc.Incr(now)
 		rc.Incr(now)
 		count = count - i + 2
-		assert(t, rc.Count(now), count)
+		require.Equal(t, count, rc.Count(now))
 		if i != n {
 			now = now.Add(duration)
 		}
 	}
 
 	now = now.Add(3*duration + duration/2)
-	assert(t, rc.Count(now), (n-3)*2)
+	require.Equal(t, (n-3)*2, rc.Count(now))
 	rc.Incr(now)
-	assert(t, rc.Count(now), (n-3)*2+1)
+	require.Equal(t, (n-3)*2+1, rc.Count(now))
 
 	now = now.Add(time.Duration(n-2) * duration)
-	assert(t, rc.Count(now), 1)
+	require.Equal(t, 1, rc.Count(now))
 
 	now = now.Add(2 * duration)
-	assert(t, rc.Count(now), 0)
-}
-
-func assert(t *testing.T, actual interface{}, expect interface{}) {
-	if actual != expect {
-		_, fileName, line, _ := runtime.Caller(1)
-		t.Fatalf("expect %v, got %v at (%v:%v)\n", expect, actual, fileName, line)
-	}
+	require.Equal(t, 0, rc.Count(now))
 }

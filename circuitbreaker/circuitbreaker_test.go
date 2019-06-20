@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 var testconf = Config{
@@ -20,47 +22,47 @@ var testconf = Config{
 
 func TestCircuitBreakerCloseToOpen(t *testing.T) {
 	cb := New(testconf)
-	assert(t, cb.currentState(), cbClose)
+	require.Equal(t, cbClose, cb.currentState())
 
 	now := time.Now()
 	for i := 0; i < testconf.TriggerThreshold-1; i++ {
 		cb.trace(cbClose, true, now)
 	}
-	assert(t, cb.currentState(), cbClose)
+	require.Equal(t, cbClose, cb.currentState())
 	cb.trace(cbClose, false, now)
-	assert(t, cb.currentState(), cbOpen)
+	require.Equal(t, cbOpen, cb.currentState())
 }
 
 func TestCircuitBreakerOpenSleepToHalfOpen(t *testing.T) {
 	cb := New(testconf)
 	cb.state = cbOpen
 	cb.openAt = time.Now().Add(-testconf.SleepWindow + 10*time.Millisecond)
-	assert(t, cb.currentState(), cbOpen)
+	require.Equal(t, cbOpen, cb.currentState())
 	time.Sleep(10 * time.Millisecond)
-	assert(t, cb.currentState(), cbHalfOpen)
+	require.Equal(t, cbHalfOpen, cb.currentState())
 }
 
 func TestCircuitBreakerHalfOpenToOpen(t *testing.T) {
 	cb := New(testconf)
 	cb.state = cbOpen
 	cb.openAt = time.Now().Add(-testconf.SleepWindow + 2*time.Millisecond)
-	assert(t, cb.currentState(), cbOpen)
+	require.Equal(t, cbOpen, cb.currentState())
 	time.Sleep(2 * time.Millisecond)
-	assert(t, cb.currentState(), cbHalfOpen)
+	require.Equal(t, cbHalfOpen, cb.currentState())
 	cb.trace(cbHalfOpen, false, time.Now().Add(-testconf.HighLatencyValue))
-	assert(t, cb.currentState(), cbOpen)
+	require.Equal(t, cbOpen, cb.currentState())
 }
 
 func TestCircuitBreakerHalfOpenToClose(t *testing.T) {
 	cb := New(testconf)
 	cb.state = cbOpen
 	cb.openAt = time.Now().Add(-testconf.SleepWindow + 2*time.Millisecond)
-	assert(t, cb.currentState(), cbOpen)
+	require.Equal(t, cbOpen, cb.currentState())
 	time.Sleep(2 * time.Millisecond)
-	assert(t, cb.currentState(), cbHalfOpen)
-	assert(t, cb.currentState(), cbOpen)
+	require.Equal(t, cbHalfOpen, cb.currentState())
+	require.Equal(t, cbOpen, cb.currentState())
 	cb.trace(cbHalfOpen, false, time.Now())
-	assert(t, cb.currentState(), cbClose)
+	require.Equal(t, cbClose, cb.currentState())
 }
 
 func TestCircuitBreaker(t *testing.T) {
@@ -82,18 +84,18 @@ func TestCircuitBreaker(t *testing.T) {
 				}
 				return nil
 			})
-			assert(t, err != ErrIsOpen, true)
+			require.NotEqual(t, ErrIsOpen, err)
 		}(i)
 	}
 	wg.Wait()
-	assert(t, cb.Circuit().IsInterrupted(), true)
+	require.True(t, cb.Circuit().IsInterrupted())
 
 	// SLEEP: no request get through
 	for i := 0; i < testconf.TriggerThreshold; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			assert(t, cb.Circuit().IsInterrupted(), true)
+			require.True(t, cb.Circuit().IsInterrupted())
 		}()
 	}
 	wg.Wait()
@@ -114,33 +116,33 @@ func TestCircuitBreaker(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	assert(t, passed, int32(1))
+	require.Equal(t, int32(1), passed)
 
 	{ // OPEN
 		c := cb.Circuit()
-		assert(t, c.IsInterrupted(), true)
+		require.True(t, c.IsInterrupted())
 	}
 
 	for i := 0; i < 3; i++ {
 		time.Sleep(testconf.SleepWindow)
 		c := cb.Circuit()
 		if i == 1 {
-			assert(t, c.IsInterrupted(), true) // CLOSE -> OPEN
+			require.True(t, c.IsInterrupted()) // CLOSE -> OPEN
 		} else {
 			// HALF-OPEN
-			assert(t, c.IsInterrupted(), false)
+			require.False(t, c.IsInterrupted())
 			c.Trace(false)
 		}
 	}
 	// CLOSE
 	for i := 0; i < testconf.TriggerThreshold; i++ {
 		c := cb.Circuit()
-		assert(t, c.IsInterrupted(), false)
+		require.False(t, c.IsInterrupted())
 		c.Trace(false)
 	}
 
 	time.Sleep(testconf.CountWindow)
-	assert(t, cb.Circuit().IsInterrupted(), false)
+	require.False(t, cb.Circuit().IsInterrupted())
 }
 
 func TestCircuitBreakerDsiabled(t *testing.T) {
@@ -152,6 +154,6 @@ func TestCircuitBreakerDsiabled(t *testing.T) {
 			time.Sleep(testconf.HighLatencyValue)
 			return errors.New("world")
 		})
-		assert(t, err != ErrIsOpen, true)
+		require.NotEqual(t, ErrIsOpen, err)
 	}
 }

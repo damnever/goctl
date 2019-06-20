@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestQueueGetNoWait(t *testing.T) {
@@ -16,11 +18,11 @@ func TestQueueGetNoWait(t *testing.T) {
 	}
 	for i := 0; i < 10; i++ {
 		item, err := q.GetNoWait()
-		assertNil(t, err)
-		assert(t, i, item.(int))
+		require.Nil(t, err)
+		require.Equal(t, i, item.(int))
 	}
 	_, err := q.GetNoWait()
-	assert(t, ErrEmpty, err)
+	require.Equal(t, ErrEmpty, err)
 }
 
 func TestQeueGet(t *testing.T) {
@@ -46,7 +48,7 @@ func TestQeueGet(t *testing.T) {
 	select {
 	case v := <-valc:
 		_, ok := v.(int)
-		assert(t, true, ok)
+		require.Equal(t, true, ok)
 	case <-time.After(30 * time.Millisecond):
 		t.Fatalf("Get timed out")
 	}
@@ -59,7 +61,7 @@ func TestQeueGet(t *testing.T) {
 	cancel()
 	select {
 	case v := <-valc:
-		assert(t, context.Canceled, v)
+		require.Equal(t, context.Canceled, v)
 	case <-time.After(30 * time.Millisecond):
 		t.Fatalf("Op timed out")
 	}
@@ -71,8 +73,8 @@ func TestQueueFIFO(t *testing.T) {
 	go func() {
 		for i := 0; i < 2; i++ {
 			item, err := q.Get(context.TODO())
-			assertNil(t, err)
-			assert(t, i, item.(int))
+			require.Nil(t, err)
+			require.Equal(t, i, item.(int))
 		}
 		close(donec)
 	}()
@@ -118,12 +120,12 @@ func TestQueueConcurrentOPS(t *testing.T) {
 					time.Sleep(time.Duration(sleep) * time.Millisecond)
 				}
 				item, err := q.Get(context.TODO())
-				assertNil(t, err)
+				require.Nil(t, err)
 				atomic.AddInt32(&count, int32(item.(int)))
 			}
 		}(i)
 	}
 
 	wg.Wait()
-	assert(t, N*(N-1)/2, int(count))
+	require.Equal(t, N*(N-1)/2, int(count))
 }
