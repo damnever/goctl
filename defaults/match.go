@@ -3,8 +3,6 @@ package defaults
 import (
 	"regexp"
 	"time"
-
-	"github.com/damnever/goctl/defaults/ebool"
 )
 
 // IntIfNotMatch returns the value deflt if actual isn't match with pattern,
@@ -152,18 +150,6 @@ func StringIfNotMatch(actual, deflt, pattern string) string {
 // NOTE it is not implemented.
 func TimeIfNotMatch(actual, deflt time.Time, pattern string) time.Time {
 	panic("not implemented")
-}
-
-func evalBool(pattern string, arg float64) bool {
-	e, err := ebool.New(pattern)
-	if err != nil {
-		panic(err)
-	}
-	ok, err := e.Eval(arg)
-	if err != nil {
-		panic(err)
-	}
-	return ok
 }
 
 // IntIfNotMatchFunc returns the value deflt if validator(actual) returns false,
